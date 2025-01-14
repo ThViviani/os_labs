@@ -12,7 +12,7 @@
 #endif
 
 #ifdef _WIN32
-    #define SERIAL_PORT "COM1"
+    #define SERIAL_PORT "COM2"
 #else
     #define SERIAL_PORT "/dev/ttys009"
 #endif
@@ -21,8 +21,8 @@
 #define LOG_HOURLY "../logs/temp_hourly.log"
 #define LOG_DAILY "../logs/temp_daily.log"
 
-#define HOUR 5
-#define DAY 10
+#define HOUR 3600
+#define DAY 86400
 #define MAX_LINE_LENGTH 256
 
 volatile int terminate = 0;
@@ -37,12 +37,12 @@ volatile int terminate = 0;
 
         DCB serial_config = {0};
         serial_config.DCBlength = sizeof(serial_config);
-        GetCommState(serial_port, &serial_config);
+        GetCommState(hComm, &serial_config);
         serial_config.BaudRate = CBR_9600;
         serial_config.ByteSize = 8;
         serial_config.Parity = NOPARITY;
         serial_config.StopBits = ONESTOPBIT;
-        SetCommState(serial_port, &serial_config);
+        SetCommState(hComm, &serial_config);
 
         COMMTIMEOUTS timeouts = { 0 };
         timeouts.ReadIntervalTimeout = 50;
@@ -63,7 +63,7 @@ volatile int terminate = 0;
         DWORD bytesRead = 0;
         if (ReadFile(hComm, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
             buffer[bytesRead] = '\0';
-            printf("Read from port %d: %s", fd, buffer);
+            printf("Read from port %d: %s", hComm, buffer);
             return strtof(buffer, NULL);
         }
         return -1.0;
@@ -171,7 +171,7 @@ void trim_log(const char *filename, int max_age_seconds) {
             timestamp.tm_mon -= 1;
             time_t entry_time = mktime(&timestamp);
 
-            if (entry_time != -1 && difftime(now, entry_time) >= max_age_seconds) {
+            if (entry_time != -1 && difftime(now, entry_time) > max_age_seconds) {
                 continue;
             }
         }

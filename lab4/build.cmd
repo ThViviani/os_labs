@@ -16,4 +16,4 @@ cmake --build . || exit /b
 
 REM Запуск программы
 echo Запуск программы:
-main.exe
+device_emulator.exe

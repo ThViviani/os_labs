@@ -13,7 +13,7 @@
 #endif
 
 #ifdef _WIN32
-    #define SERIAL_PORT "COM0"
+    #define SERIAL_PORT "COM1"
 #else
     #define SERIAL_PORT "/dev/ttys008"
 #endif
