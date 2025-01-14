@@ -137,12 +137,6 @@ void write_log(const char *filename, const char *message) {
     fclose(file);
 }
 
-#include <stdio.h>
-#include <time.h>
-#include <string.h>
-
-#define MAX_LINE_LENGTH 256
-
 void trim_log(const char *filename, int max_age_seconds) {
     FILE *file = fopen(filename, "r");
     if (!file) {
