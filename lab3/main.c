@@ -326,9 +326,8 @@ int check_process_ended(int pid) {
 int main(int argc, char *argv[]) {
     setup_signal_handler();
 
-   counter = create_shared_memory(COUNTER_SHM_NAME);
+    counter = create_shared_memory(COUNTER_SHM_NAME);
     main_process_flag = create_shared_memory(MAIN_SHM_NAME);
-    *main_process_flag = 0;
 
     if (argc > 1 && strcmp(argv[1], "--copy1") == 0) {
         copy1_func();
