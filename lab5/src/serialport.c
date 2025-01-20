@@ -32,7 +32,7 @@
     }
 
     float read_port(HANDLE hComm) {
-        char buffer[MAX_LINE_LENGTH] = {0};
+        char buffer[256] = {0};
         DWORD bytesRead = 0;
         if (ReadFile(hComm, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
             buffer[bytesRead] = '\0';
