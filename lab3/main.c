@@ -138,18 +138,20 @@ void unlock_mutex(void* mutex) {
     void* log_status(void* arg)
 #endif
 {
-    #ifdef _WIN32
-        Sleep(1000);
-    #else
-        usleep(1000000);
-    #endif
+    while (1) {
+        #ifdef _WIN32
+            Sleep(1000);
+        #else
+            usleep(1000000);
+        #endif
 
-    char log_msg[64];
-    lock_mutex(&counter_mutex);
-    snprintf(log_msg, sizeof(log_msg), "Counter = %d, ", *counter);
-    unlock_mutex(&counter_mutex);
+        char log_msg[64];
+        lock_mutex(&counter_mutex);
+        snprintf(log_msg, sizeof(log_msg), "Counter = %d, ", *counter);
+        unlock_mutex(&counter_mutex);
 
-    write_log(log_msg);
+        write_log(log_msg);
+    }
 
     return NULL;
 }

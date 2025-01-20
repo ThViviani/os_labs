@@ -1,11 +1,6 @@
 #ifndef SHARED_MEMORY_H
 #define SHARED_MEMORY_H
 
-#include <sys/mman.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <pthread.h>
-
 #define SHM_SIZE sizeof(int)
 
 int* create_shared_memory(char* name);

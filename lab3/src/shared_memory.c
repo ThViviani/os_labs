@@ -16,7 +16,7 @@
 
 int* create_shared_memory(char* name) {
     #ifdef _WIN32
-        if (SIZE <= 0) {
+        if (SHM_SIZE <= 0) {
             fprintf(stderr, "Error: size must be greater than 0\n");
             exit(1);
         }
@@ -24,14 +24,14 @@ int* create_shared_memory(char* name) {
         HANDLE hSharedMemory;
         int* counter;
 
-        hSharedMemory = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, (DWORD)SIZE, name);
+        hSharedMemory = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, (DWORD)SHM_SIZE, name);
 
         if (hSharedMemory == NULL) {
             fprintf(stderr, "CreateFileMapping failed with error %lu\n", GetLastError());
             exit(1);
         }
 
-        counter = (int*)MapViewOfFile(hSharedMemory, FILE_MAP_ALL_ACCESS, 0, 0, SIZE);
+        counter = (int*)MapViewOfFile(hSharedMemory, FILE_MAP_ALL_ACCESS, 0, 0, SHM_SIZE);
 
         if (counter == NULL) {
             fprintf(stderr, "MapViewOfFile failed with error %lu\n", GetLastError());
