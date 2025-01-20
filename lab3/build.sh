@@ -12,3 +12,5 @@ cmake ../
 
 # Сборка проекта
 cmake --build .
+
+./SharedMemoryProject

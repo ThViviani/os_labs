@@ -359,7 +359,7 @@ int main(int argc, char *argv[]) {
     }
 
     time_t now = time(NULL);
-    fprintf(log_file, "Процесс %d запущен в %s", getpid(), ctime(&now));
+    fprintf(log_file, "Process %d starts at %s", getpid(), ctime(&now));
     fclose(log_file);
 
 #ifdef _WIN32
