@@ -1,12 +1,15 @@
 @echo off
 
-cd cross_platform_logger
+REM Остановить выполнение при ошибке
+setlocal enabledelayedexpansion
+if errorlevel 1 exit /b %errorlevel%
 
-mkdir build
+REM Создание и переход в директорию сборки
+if not exist build mkdir build
 cd build
 
-cmake -G "MinGW Makefiles" ..
+REM Конфигурация CMake
+cmake -G "MinGW Makefiles" .. || exit /b
 
-cmake --build .
-
-cross_platform_logger.exe
+REM Сборка проекта
+cmake --build . || exit /b
