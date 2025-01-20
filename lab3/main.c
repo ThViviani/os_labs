@@ -21,6 +21,7 @@
 #endif
 
 #define MASTER_LOCK_FILE "master.lock"
+#define LOG_FILE "../logs/log.txt"
 
 int *counter = NULL;
 
@@ -52,6 +53,22 @@ void create_master_lock() {
     } else {
         printf("master.lock создан, главный поток.\n");
         close(fd);
+    }
+#endif
+}
+
+void remove_master_lock() {
+#ifdef _WIN32
+    if (!DeleteFile(MASTER_LOCK_FILE)) {
+        printf("Не удалось удалить master.lock.\n");
+    } else {
+        printf("master.lock успешно удалён.\n");
+    }
+#else
+    if (unlink(MASTER_LOCK_FILE) == -1) {
+        perror("Не удалось удалить master.lock");
+    } else {
+        printf("master.lock успешно удалён.\n");
     }
 #endif
 }
@@ -193,7 +210,13 @@ int check_process_finished(int pid) {
 #endif
 }
 
-void* run_copies(void* arg) {
+
+#ifdef _WIN32
+    DWORD WINAPI run_copies(LPVOID arg)
+#else
+    void* run_copies(void* arg)
+#endif
+{
     int copy_1_pid = 0;
     int copy_2_pid = 0;
 
@@ -201,17 +224,17 @@ void* run_copies(void* arg) {
         if (copy_1_pid == 0)
             copy_1_pid = create_copy("--copy1");
         else
-            write_log("Copy 1 is still active. Skipping launch.");
+            write_log("Copy 1 is still active.");
 
         if (copy_2_pid == 0)
             copy_2_pid = create_copy("--copy2");
         else
-            write_log("Copy 2 is still active. Skipping launch.");
+            write_log("Copy 2 is still active.");
 
         #ifdef _WIN32
             Sleep(3000);
         #else
-            usleep(3000 * 1000);
+            usleep(3000000);
         #endif
 
         if (check_process_finished(copy_1_pid))
@@ -222,15 +245,19 @@ void* run_copies(void* arg) {
 }
 
 #ifdef _WIN32
-    void signal_handler(int sig) {
-        printf("Получен сигнал %d, завершение программы\n", sig);
-        exit(0);
-    }
+void signal_handler(int sig) {
+    printf("Получен сигнал %d, завершение программы\n", sig);
+    write_log("Программа завершена по сигналу");
+    remove_master_lock();
+    exit(0);
+}
 #else
-    void sigint_handler(int sig) {
-        printf("Получен сигнал %d, завершение программы\n", sig);
-        exit(0);
-    }
+void sigint_handler(int sig) {
+    printf("Получен сигнал %d, завершение программы\n", sig);
+    write_log("Программа завершена по сигналу");
+    remove_master_lock();
+    exit(0);
+}
 #endif
 
 #ifdef _WIN32
@@ -297,7 +324,16 @@ void* run_copies(void* arg) {
 }
 
 int main(int argc, char *argv[]) {
-    int is_master = 0;
+    counter = create_shared_memory();
+
+    if (argc > 1) {
+        if (strcmp(argv[1], "--copy1") == 0)
+            copy1_func();
+        if (strcmp(argv[1], "--copy2") == 0)
+            copy2_func();
+    }
+
+    int is_master = 1;
 
 #ifdef _WIN32
     signal(SIGINT, signal_handler);
@@ -311,19 +347,20 @@ int main(int argc, char *argv[]) {
 
     if (is_master_thread()) {
         create_master_lock();
-        is_master = 1;
     } else {
         printf("Этот поток не главный. Файл master.lock уже существует.\n");
+        is_master = 0;
     }
 
-    counter = create_shared_memory();
-
-    if (argc > 1) {
-        if (strcmp(argv[1], "--copy1") == 0)
-            copy1_func();
-        if (strcmp(argv[1], "--copy2") == 0)
-            copy2_func();
+    FILE *log_file = fopen(LOG_FILE, "a");
+    if (log_file == NULL) {
+        perror("Не удалось открыть лог-файл");
+        return 1;
     }
+
+    time_t now = time(NULL);
+    fprintf(log_file, "Процесс %d запущен в %s", getpid(), ctime(&now));
+    fclose(log_file);
 
 #ifdef _WIN32
     HANDLE increment_thread, log_thread, input_thread, run_copies_thread;
@@ -389,7 +426,7 @@ int main(int argc, char *argv[]) {
         pthread_join(log_thread, NULL);
         pthread_join(run_copies_thread, NULL);
     }
-#endif
+    #endif
     cleanup_shared_memory(counter);
 
     return 0;
