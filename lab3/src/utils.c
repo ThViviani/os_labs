@@ -1,21 +1,18 @@
+#include "utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <unistd.h>
-
 #ifdef _WIN32
-#include <windows.h>
-#include <time.h>
+    #include <windows.h>
+    #include <time.h>
 #else
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/time.h>
+    #include <fcntl.h>
+    #include <unistd.h>
+    #include <sys/time.h>
+    #include <sys/types.h>
+    #include <sys/stat.h>
 #endif
-
-#define LOG_FILE_PATH "../logs/log.txt"
 
 void write_log(const char* message) {
     char buffer[256];
@@ -81,5 +78,6 @@ void write_log(const char* message) {
         }
 
         close(fd);
+        printf("data was sent\n");
     #endif
 }

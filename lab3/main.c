@@ -16,102 +16,169 @@
 
 #ifdef _WIN32
     HANDLE counter_mutex = NULL;
+    HANDLE main_process_mutex = NULL;
 #else
     pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_t main_process_mutex = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
-#define MASTER_LOCK_FILE "master.lock"
 #define LOG_FILE "../logs/log.txt"
+#define COUNTER_SHM_NAME "/counter_shared_memory"
+#define MAIN_SHM_NAME "/main_shared_memory"
 
 int *counter = NULL;
+int *main_process_flag = NULL;
 
 #ifdef _WIN32
     #define NULL 0
 #endif
 
-int is_master_thread() {
-#ifdef _WIN32
-    return (GetFileAttributes(MASTER_LOCK_FILE) == INVALID_FILE_ATTRIBUTES);
-#else
-    return (access(MASTER_LOCK_FILE, F_OK) != 0);
-#endif
-}
-
-void create_master_lock() {
-#ifdef _WIN32
-    HANDLE hFile = CreateFile(MASTER_LOCK_FILE, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) {
-        printf("Не удалось создать master.lock, возможно, файл уже существует.\n");
-    } else {
-        printf("master.lock создан, главный поток.\n");
-        CloseHandle(hFile);
-    }
-#else
-    int fd = open(MASTER_LOCK_FILE, O_CREAT | O_EXCL | O_WRONLY, 0644);
-    if (fd == -1) {
-        perror("Не удалось создать master.lock, возможно, файл уже существует.");
-    } else {
-        printf("master.lock создан, главный поток.\n");
-        close(fd);
-    }
-#endif
-}
-
-void remove_master_lock() {
-#ifdef _WIN32
-    if (!DeleteFile(MASTER_LOCK_FILE)) {
-        printf("Не удалось удалить master.lock.\n");
-    } else {
-        printf("master.lock успешно удалён.\n");
-    }
-#else
-    if (unlink(MASTER_LOCK_FILE) == -1) {
-        perror("Не удалось удалить master.lock");
-    } else {
-        printf("master.lock успешно удалён.\n");
-    }
-#endif
-}
-
-void lock_mutex() {
-#ifdef _WIN32
-    WaitForSingleObject(counter_mutex, INFINITE);
-#else
-    pthread_mutex_lock(&counter_mutex);
-#endif
-}
-
-void unlock_mutex() {
+void signal_handler(int sig) {
     #ifdef _WIN32
-        ReleaseMutex(counter_mutex);
+        if (sig == CTRL_C_EVENT) {
+            printf("Caught interrupt signal\n");
+            if (main_process_flag) {
+              *main_process_flag = 0;
+            }
+            exit(0);
+        }
     #else
-        pthread_mutex_unlock(&counter_mutex);
+        if (sig == SIGINT) {
+            printf("Caught interrupt signal\n");
+            if (main_process_flag) {
+                *main_process_flag = 0;
+            }
+            exit(0);
+        }
     #endif
 }
 
+void setup_signal_handler() {
+#ifdef _WIN32
+    if (!SetConsoleCtrlHandler(signal_handler, TRUE)) {
+        printf("Error setting control handler\n");
+        exit(1);
+    }
+#else
+    struct sigaction sa;
+    sa.sa_handler = signal_handler;
+    sa.sa_flags = 0;
+    sigemptyset(&sa.sa_mask);
+
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        perror("sigaction failed");
+        exit(1);
+    }
+#endif
+}
+
+void lock_mutex(void* mutex) {
+#ifdef _WIN32
+    WaitForSingleObject((HANDLE)mutex, INFINITE);
+#else
+    pthread_mutex_lock((pthread_mutex_t*)mutex);
+#endif
+}
+
+void unlock_mutex(void* mutex) {
+#ifdef _WIN32
+    ReleaseMutex((HANDLE)mutex);
+#else
+    pthread_mutex_unlock((pthread_mutex_t*)mutex);
+#endif
+}
+
+// Поток, который запускает таймер и раз в 300 мс увеличивает счетчик на 1:
+#ifdef _WIN32
+    DWORD WINAPI increment(LPVOID arg)
+#else
+    void* increment(void* arg)
+#endif
+{
+    while (1) {
+        lock_mutex(&counter_mutex);
+        (*counter)++;
+        unlock_mutex(&counter_mutex);
+
+        #ifdef _WIN32
+            Sleep(300);
+        #else
+            usleep(300000);
+        #endif
+    }
+
+    return NULL;
+}
+
+// Поток, который позволяет пользователю через интерфейс командной строки установить любое значение счетчика
+#ifdef _WIN32
+    DWORD WINAPI input(LPVOID arg)
+#else
+    void* input(void* arg)
+#endif
+{
+    int new_counter_value;
+    while (1) {
+        printf("Enter new counter value: ");
+        if (scanf("%d", &new_counter_value) == 1) {
+            (*counter) = new_counter_value;
+        }
+        lock_mutex(&counter_mutex);
+        (*counter)++;
+        unlock_mutex(&counter_mutex);
+    }
+
+    return NULL;
+}
+
+// Поток, который раз в 1 секунду пишет в лог-файл текущее время (дата, часы, минуты, секунды, миллисекунды), свой идентификатор процесса и значение счетчика
+#ifdef _WIN32
+    DWORD WINAPI log_status(LPVOID arg)
+#else
+    void* log_status(void* arg)
+#endif
+{
+    #ifdef _WIN32
+        Sleep(1000);
+    #else
+        usleep(1000000);
+    #endif
+
+    char log_msg[64];
+    lock_mutex(&counter_mutex);
+    snprintf(log_msg, sizeof(log_msg), "Counter = %d, ", *counter);
+    unlock_mutex(&counter_mutex);
+
+    write_log(log_msg);
+
+    return NULL;
+}
+
+// Копия 1 записывает в тот же лог файл строку со своим идентификатором процесса, временем своего запуска, увеличивает текущее значение счетчика на 10, записывает в лог файл время выхода и завершается
 void copy1_func() {
     char log_msg[64];
     snprintf(log_msg, sizeof(log_msg), "Child1 start:");
     write_log(log_msg);
 
-    lock_mutex();
+    lock_mutex(&counter_mutex);
     *counter += 10;
-    unlock_mutex();
+    unlock_mutex(&counter_mutex);
 
     snprintf(log_msg, sizeof(log_msg), "Child1 exit:");
     write_log(log_msg);
     exit(0);
 }
 
+// Копия 2 записывает в тот же лог файл строку со своим идентификатором процесса, временем своего запуска, увеличивает текущее значение счетчика в 2 раза, через 2 секунды уменьшает значение счетчика в 2 раза, записывает в лог файл время выхода и завершается
 void copy2_func() {
     char log_msg[64];
 
     snprintf(log_msg, sizeof(log_msg), "Child2 start:");
     write_log(log_msg);
 
-    lock_mutex();
+    lock_mutex(&counter_mutex);
     *counter = *counter << 1;
-    unlock_mutex();
+    unlock_mutex(&counter_mutex);
 
     #ifdef _WIN32
         Sleep(2000);
@@ -119,9 +186,9 @@ void copy2_func() {
         usleep(2000000);
     #endif
 
-    lock_mutex();
+    lock_mutex(&counter_mutex);
     *counter = *counter >> 1;
-    unlock_mutex();
+    unlock_mutex(&counter_mutex);
 
     snprintf(log_msg, sizeof(log_msg), "Child2 exit:");
     write_log(log_msg);
@@ -165,24 +232,30 @@ int create_copy(char* param) {
     return pi.dwProcessId;
 
 #else
-    int pid = fork();
+    char program_path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", program_path, sizeof(program_path) - 1);
+    if (len == -1) {
+        perror("Failed to get the program path");
+        exit(1);
+    }
+    program_path[len] = '\0';
+
+    char *new_argv[] = {program_path, param, NULL};
+    pid_t pid = fork();
+
     if (pid == 0) {
-        char program_path[PATH_MAX];
-        if (readlink("/proc/self/exe", program_path, sizeof(program_path)) == -1) {
-            perror("Failed to get the program path");
-            exit(1);
-        }
-        char *new_argv[] = {program_path, param, NULL};
         execv(program_path, new_argv);
-    } else if (pid < 1) {
-        printf("Failed to create child process\n");
-        exit(0);
+        perror("execv failed");
+        exit(1);
+    } else if (pid < 0) {
+        perror("Failed to create child process");
+        exit(1);
     }
     return pid;
 #endif
 }
 
-int check_process_finished(int pid) {
+int check_process_ended(int pid) {
 #ifdef _WIN32
     HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
     if (hProcess == NULL) {
@@ -210,7 +283,7 @@ int check_process_finished(int pid) {
 #endif
 }
 
-
+// Поток, который раз в 3 секунды запускает 2 копии:
 #ifdef _WIN32
     DWORD WINAPI run_copies(LPVOID arg)
 #else
@@ -221,15 +294,17 @@ int check_process_finished(int pid) {
     int copy_2_pid = 0;
 
     while(1) {
-        if (copy_1_pid == 0)
+        if (copy_1_pid == 0) {
             copy_1_pid = create_copy("--copy1");
-        else
-            write_log("Copy 1 is still active.");
+        } else {
+            write_log("Copy 1 is still running.");
+        }
 
-        if (copy_2_pid == 0)
+        if (copy_2_pid == 0) {
             copy_2_pid = create_copy("--copy2");
-        else
-            write_log("Copy 2 is still active.");
+        } else {
+            write_log("Copy 2 is still running.");
+        }
 
         #ifdef _WIN32
             Sleep(3000);
@@ -237,197 +312,92 @@ int check_process_finished(int pid) {
             usleep(3000000);
         #endif
 
-        if (check_process_finished(copy_1_pid))
+        if (check_process_ended(copy_1_pid)) {
             copy_1_pid = 0;
-        if (check_process_finished(copy_2_pid))
-            copy_2_pid = 0;
-    }
-}
-
-#ifdef _WIN32
-void signal_handler(int sig) {
-    printf("Получен сигнал %d, завершение программы\n", sig);
-    write_log("Программа завершена по сигналу");
-    remove_master_lock();
-    exit(0);
-}
-#else
-void sigint_handler(int sig) {
-    printf("Получен сигнал %d, завершение программы\n", sig);
-    write_log("Программа завершена по сигналу");
-    remove_master_lock();
-    exit(0);
-}
-#endif
-
-#ifdef _WIN32
-    DWORD WINAPI increment(LPVOID arg)
-#else
-    void* increment(void* arg)
-#endif
-{
-    while (1) {
-        lock_mutex();
-        (*counter)++;
-        unlock_mutex();
-
-        #ifdef _WIN32
-            Sleep(300);
-        #else
-            usleep(300000);
-        #endif
-    }
-
-    return NULL;
-}
-
-#ifdef _WIN32
-    DWORD WINAPI input(LPVOID arg)
-#else
-    void* input(void* arg)
-#endif
-{
-    int new_counter_value;
-    while (1) {
-        printf("Enter new counter value: ");
-        if (scanf("%d", &new_counter_value) == 1) {
-            (*counter) = new_counter_value;
         }
-        lock_mutex();
-        (*counter)++;
-        unlock_mutex();
+        if (check_process_ended(copy_2_pid)) {
+            copy_2_pid = 0;
+        }
     }
-
-    return NULL;
-}
-
-#ifdef _WIN32
-    DWORD WINAPI log_status(LPVOID arg)
-#else
-    void* log_status(void* arg)
-#endif
-{
-    #ifdef _WIN32
-        Sleep(1000);
-    #else
-        usleep(1000000);
-    #endif
-
-    char log_msg[64];
-    lock_mutex();
-    snprintf(log_msg, sizeof(log_msg), "Counter = %d, ", *counter);
-    unlock_mutex();
-
-    write_log(log_msg);
-
-    return NULL;
 }
 
 int main(int argc, char *argv[]) {
-    counter = create_shared_memory();
+    setup_signal_handler();
 
-    if (argc > 1) {
-        if (strcmp(argv[1], "--copy1") == 0)
-            copy1_func();
-        if (strcmp(argv[1], "--copy2") == 0)
-            copy2_func();
+   counter = create_shared_memory(COUNTER_SHM_NAME);
+    main_process_flag = create_shared_memory(MAIN_SHM_NAME);
+    *main_process_flag = 0;
+
+    if (argc > 1 && strcmp(argv[1], "--copy1") == 0) {
+        copy1_func();
+    } else if (argc > 1 && strcmp(argv[1], "--copy2") == 0) {
+        copy2_func();
     }
 
-    int is_master = 1;
+    lock_mutex(&main_process_mutex);
+    if (*main_process_flag == 0) {
+        *main_process_flag = 1;
+        printf("This is the main process.\n");
+        write_log("Main Process starts:");
 
-#ifdef _WIN32
-    signal(SIGINT, signal_handler);
-#else
-    struct sigaction sa;
-    sa.sa_handler = sigint_handler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    sigaction(SIGINT, &sa, NULL);
-#endif
+        #ifdef _WIN32
+            HANDLE increment_thread, input_thread, log_thread, run_copies_thread;
 
-    if (is_master_thread()) {
-        create_master_lock();
+            increment_thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)increment, NULL, 0, NULL);
+            input_thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)input, NULL, 0, NULL);
+            log_thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)log_status, NULL, 0, NULL);
+            run_copies_thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)run_copies, NULL, 0, NULL);
+
+            WaitForSingleObject(increment_thread, INFINITE);
+            WaitForSingleObject(input_thread, INFINITE);
+            WaitForSingleObject(log_thread, INFINITE);
+            WaitForSingleObject(run_copies_thread, INFINITE);
+        #else
+            pthread_t increment_thread, input_thread, log_thread, run_copies_thread;
+            pthread_create(&increment_thread, NULL, increment, NULL);
+            pthread_create(&input_thread, NULL, input, NULL);
+            pthread_create(&log_thread, NULL, log_status, NULL);
+            pthread_create(&run_copies_thread, NULL, run_copies, NULL);
+
+            pthread_join(increment_thread, NULL);
+            pthread_join(input_thread, NULL);
+            pthread_join(log_thread, NULL);
+            pthread_join(run_copies_thread, NULL);
+        #endif
     } else {
-        printf("Этот поток не главный. Файл master.lock уже существует.\n");
-        is_master = 0;
+       printf("This is a child process.\n");
+       unlock_mutex(&main_process_mutex);
+
+        #ifdef _WIN32
+            HANDLE increment_thread, input_thread;
+
+            increment_thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)increment, NULL, 0, NULL);
+            input_thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)input, NULL, 0, NULL);
+
+            WaitForSingleObject(increment_thread, INFINITE);
+            WaitForSingleObject(input_thread, INFINITE);
+        #else
+            pthread_t increment_thread, input_thread;
+            pthread_create(&increment_thread, NULL, increment, NULL);
+            pthread_create(&input_thread, NULL, input, NULL);
+
+            pthread_join(increment_thread, NULL);
+            pthread_join(input_thread, NULL);
+        #endif
     }
 
-    FILE *log_file = fopen(LOG_FILE, "a");
-    if (log_file == NULL) {
-        perror("Не удалось открыть лог-файл");
-        return 1;
-    }
-
-    time_t now = time(NULL);
-    fprintf(log_file, "Process %d starts at %s", getpid(), ctime(&now));
-    fclose(log_file);
-
-#ifdef _WIN32
-    HANDLE increment_thread, log_thread, input_thread, run_copies_thread;
-
-    increment_thread = CreateThread(NULL, 0, increment, NULL, 0, NULL);
-    if (increment_thread == NULL) {
-        fprintf(stderr, "Ошибка при создании потока increment\n");
-        return 1;
-    }
-
-    input_thread = CreateThread(NULL, 0, input, NULL, 0, NULL);
-    if (input_thread == NULL) {
-        fprintf(stderr, "Ошибка при создании потока input\n");
-        return 1;
-    }
-
-    WaitForSingleObject(increment_thread, INFINITE);
-    WaitForSingleObject(input_thread, INFINITE);
-
-    if (is_master) {
-        log_thread = CreateThread(NULL, 0, log_status, NULL, 0, NULL);
-        if (log_thread == NULL) {
-            fprintf(stderr, "Ошибка при создании потока log_status\n");
-            return 1;
+    while (1) {
+        if (*main_process_flag == 0) {
+            lock_mutex(&main_process_mutex);
+            *main_process_flag = 1;
+            printf("Process %d is now the main process.\n", getpid());
+            unlock_mutex(&main_process_mutex);
+            break;
         }
-
-        run_copies_thread = CreateThread(NULL, 0, run_copies, NULL, 0, NULL);
-        if (run_copies_thread == NULL) {
-            fprintf(stderr, "Ошибка при создании потока run_copies\n");
-            return 1;
-        }
-
-        WaitForSingleObject(log_thread, INFINITE);
-        WaitForSingleObject(run_copies_thread, INFINITE);
-    }
-#else
-    pthread_t increment_thread, log_thread, input_thread, run_copies_thread;
-
-    if (pthread_create(&increment_thread, NULL, increment, NULL) != 0) {
-        perror("increment thread");
-        return 1;
     }
 
-    if (pthread_create(&input_thread, NULL, input, NULL) != 0) {
-        perror("input thread");
-        return 1;
-    }
-
-    pthread_join(increment_thread, NULL);
-    pthread_join(input_thread, NULL);
-
-    if (is_master) {
-        if (pthread_create(&log_thread, NULL, log_status, NULL) != 0) {
-            perror("log_status thread");
-            return 1;
-        }
-
-        if (pthread_create(&run_copies_thread, NULL, run_copies, NULL) != 0) {
-            perror("run_copies thread");
-            return 1;
-        }
-
-        pthread_join(log_thread, NULL);
-        pthread_join(run_copies_thread, NULL);
-    }
-    #endif
-    cleanup_shared_memory(counter);
-
+    cleanup_shared_memory(counter, COUNTER_SHM_NAME);
+    cleanup_shared_memory(main_process_flag, MAIN_SHM_NAME);
     return 0;
 }
+

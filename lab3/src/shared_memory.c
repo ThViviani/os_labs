@@ -14,7 +14,7 @@
 
 #include "shared_memory.h"
 
-int* create_shared_memory() {
+int* create_shared_memory(char* name) {
     #ifdef _WIN32
         if (SIZE <= 0) {
             fprintf(stderr, "Error: size must be greater than 0\n");
@@ -24,7 +24,7 @@ int* create_shared_memory() {
         HANDLE hSharedMemory;
         int* counter;
 
-        hSharedMemory = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, (DWORD)SIZE, SHM_NAME);
+        hSharedMemory = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, (DWORD)SIZE, name);
 
         if (hSharedMemory == NULL) {
             fprintf(stderr, "CreateFileMapping failed with error %lu\n", GetLastError());
@@ -44,7 +44,7 @@ int* create_shared_memory() {
         int shm_fd;
         int* counter;
 
-        shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0777);
+        shm_fd = shm_open(name, O_CREAT | O_RDWR, 0777);
         if (shm_fd == -1) {
             perror("shm_open");
             exit(1);
@@ -64,7 +64,7 @@ int* create_shared_memory() {
         if (counter == MAP_FAILED) {
             perror("mmap failed");
             close(shm_fd);
-            shm_unlink(SHM_NAME);
+            shm_unlink(name);
             exit(1);
         }
 
@@ -72,7 +72,7 @@ int* create_shared_memory() {
     #endif
 }
 
-void cleanup_shared_memory(int* ptr) {
+void cleanup_shared_memory(int* ptr, char* name) {
 #ifdef _WIN32
     if (ptr != NULL) {
         UnmapViewOfFile(ptr);
@@ -82,7 +82,7 @@ void cleanup_shared_memory(int* ptr) {
         perror("munmap");
     }
 
-    if (shm_unlink(SHM_NAME) == -1) {
+    if (shm_unlink(name) == -1) {
         perror("shm_unlink");
     }
 #endif

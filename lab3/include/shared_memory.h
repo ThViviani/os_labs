@@ -6,10 +6,9 @@
 #include <unistd.h>
 #include <pthread.h>
 
-#define SHM_NAME "/shared_memory"
 #define SHM_SIZE sizeof(int)
 
-int* create_shared_memory();
-void cleanup_shared_memory(int* ptr);
+int* create_shared_memory(char* name);
+void cleanup_shared_memory(int* ptr, char* name);
 
 #endif // SHARED_MEMORY_H
